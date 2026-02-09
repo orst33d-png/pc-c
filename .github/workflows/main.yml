@@ -1,0 +1,121 @@
+name: NoMachine
+
+on:
+  workflow_dispatch:
+
+jobs:
+  nomachine:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+      # =========================
+      # 1. Crear usuario local
+      # =========================
+      - name: Create Local User for NoMachine
+        run: |
+          Add-Type -AssemblyName System.Security
+
+          $chars = @{
+            Upper   = [char[]](65..90)
+            Lower   = [char[]](97..122)
+            Number  = [char[]](48..57)
+            Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
+          }
+
+          $pwd = @()
+          $pwd += $chars.Upper   | Get-Random -Count 4
+          $pwd += $chars.Lower   | Get-Random -Count 4
+          $pwd += $chars.Number  | Get-Random -Count 4
+          $pwd += $chars.Special | Get-Random -Count 4
+          $password = -join ($pwd | Sort-Object { Get-Random })
+
+          $secure = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "NX" -Password $secure -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "NX"
+
+          echo "NX_USER=NX" >> $env:GITHUB_ENV
+          echo "NX_PASS=$password" >> $env:GITHUB_ENV
+
+      # =========================
+      # 2. Instalar NoMachine
+      # =========================
+      - name: Install NoMachine
+        run: |
+          $url = "https://download.nomachine.com/download/8.13/Windows/nomachine_8.13.1_1_x64.exe"
+          $path = "$env:TEMP\nomachine.exe"
+          Invoke-WebRequest $url -OutFile $path
+          Start-Process $path -ArgumentList "/silent" -Wait
+
+      # =========================
+      # 3. Abrir puerto 4000
+      # =========================
+      - name: Open NoMachine Firewall Port
+        run: |
+          netsh advfirewall firewall delete rule name="NoMachine" | Out-Null
+          netsh advfirewall firewall add rule name="NoMachine" `
+            dir=in action=allow protocol=TCP localport=4000
+
+      # =========================
+      # 4. Verificar nxserver
+      # =========================
+      - name: Verify NoMachine Service
+        run: |
+          & "C:\Program Files\NoMachine\bin\nxserver.exe" --status
+
+      # =========================
+      # 5. Instalar Tailscale
+      # =========================
+      - name: Install Tailscale
+        run: |
+          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $msi = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest $url -OutFile $msi
+          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait
+
+      # =========================
+      # 6. Conectar a Tailscale
+      # =========================
+      - name: Connect to Tailscale
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+            --hostname=gh-nx-$env:GITHUB_RUN_ID
+
+          $ip = $null
+          for ($i=0; $i -lt 10; $i++) {
+            $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+            if ($ip) { break }
+            Start-Sleep 5
+          }
+
+          if (-not $ip) {
+            Write-Error "Tailscale IP not assigned"
+            exit 1
+          }
+
+          echo "TS_IP=$ip" >> $env:GITHUB_ENV
+
+      # =========================
+      # 7. Mostrar datos
+      # =========================
+      - name: Show Connection Info
+        run: |
+          Write-Host ""
+          Write-Host "===== NoMachine ACCESS ====="
+          Write-Host "IP:        $env:TS_IP"
+          Write-Host "Port:      4000"
+          Write-Host "User:      $env:NX_USER"
+          Write-Host "Password:  $env:NX_PASS"
+          Write-Host "============================"
+          Write-Host ""
+
+      # =========================
+      # 8. Mantener runner vivo
+      # =========================
+      - name: Keep Alive
+        run: |
+          while ($true) {
+            Write-Host "[$(Get-Date)] NoMachine active"
+            Start-Sleep 300
+          }
