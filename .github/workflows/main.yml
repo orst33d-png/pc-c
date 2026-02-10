@@ -19,7 +19,6 @@ jobs:
           $chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*"
           $bytes = New-Object byte[] 24
           [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
-
           $password = -join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })
 
           $secure = ConvertTo-SecureString $password -AsPlainText -Force
@@ -34,68 +33,53 @@ jobs:
 
 
       # =========================
-      # 2. Instalar NoMachine
+      # 2. Instalar NoMachine (MSI)
       # =========================
       - name: Install NoMachine
+        shell: pwsh
         run: |
-          $url = "https://download.nomachine.com/download/8.13/Windows/nomachine_8.13.1_1_x64.exe"
-          $file = "$env:TEMP\nomachine.exe"
+          $url  = "https://download.nomachine.com/download/8.13/Windows/nomachine_8.13.1_1_x64.msi"
+          $file = "$env:TEMP\nomachine.msi"
 
-          Invoke-WebRequest $url -OutFile $file
+          curl.exe -L $url -o $file
 
-          if (!(Test-Path $file)) {
-              Write-Error "Download failed"
-              exit 1
-          }
-
-          $size = (Get-Item $file).Length
-          if ($size -lt 50000000) {
-              Write-Error "Downloaded file is too small -> Bad download"
-              exit 1
-          }
-
-          Start-Process $file -ArgumentList "/S" -Wait
+          Start-Process msiexec.exe -ArgumentList "/i `"$file`" /quiet /norestart" -Wait
 
 
       # =========================
-      # 3. Esperar instalación
+      # 3. Verificar servicio NoMachine
       # =========================
-      - name: Wait for NoMachine
+      - name: Verify NoMachine Service
+        shell: pwsh
         run: |
-          $path = "C:\Program Files\NoMachine\bin\nxserver.exe"
+          $svc = Get-Service | Where-Object { $_.Name -like "*nx*" }
 
-          for ($i=0; $i -lt 30; $i++) {
-            if (Test-Path $path) { break }
-            Start-Sleep 5
-          }
-
-          if (!(Test-Path $path)) {
-            Write-Error "NoMachine not installed"
+          if (!$svc) {
+            Write-Error "NoMachine service not found"
             exit 1
           }
 
-
-      # =========================
-      # 4. Iniciar servicio NX
-      # =========================
-      - name: Start NX Server
-        run: |
-          & "C:\Program Files\NoMachine\bin\nxserver.exe" --start
-          & "C:\Program Files\NoMachine\bin\nxserver.exe" --status
+          if ($svc.Status -ne "Running") {
+            Start-Service $svc.Name
+          }
 
 
       # =========================
-      # 5. Firewall
+      # 4. Firewall
       # =========================
       - name: Open Firewall
+        shell: pwsh
         run: |
-          netsh advfirewall firewall add rule name="NoMachine" dir=in action=allow protocol=TCP localport=4000
+          netsh advfirewall firewall delete rule name="NoMachine" | Out-Null
+          netsh advfirewall firewall add rule name="NoMachine" `
+            dir=in action=allow protocol=TCP localport=4000 profile=any
 
 
       # =========================
-      # 6. Instalar Tailscale
+      # 5. Instalar Tailscale
       # =========================
       - name: Install Tailscale
+        shell: pwsh
         run: |
           $url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
           $file = "$env:TEMP\tailscale.msi"
@@ -105,35 +89,38 @@ jobs:
 
 
       # =========================
-      # 7. Conectar Tailscale
+      # 6. Conectar Tailscale
       # =========================
       - name: Connect Tailscale
+        shell: pwsh
         run: |
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
             --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
             --hostname=gh-nx-$env:GITHUB_RUN_ID
 
           $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-          echo "TS_IP=$ip" >> $env:GITHUB_ENV
+          "TS_IP=$ip" | Out-File -Append $env:GITHUB_ENV
 
 
       # =========================
-      # 8. Mostrar datos
+      # 7. Mostrar datos
       # =========================
       - name: Show Access
+        shell: pwsh
         run: |
-          Write-Host "==== CONNECTION ===="
-          Write-Host "IP: $env:TS_IP"
+          Write-Host "==== NoMachine ===="
+          Write-Host "IP:   $env:TS_IP"
           Write-Host "Port: 4000"
           Write-Host "User: $env:NX_USER"
           Write-Host "Pass: $env:NX_PASS"
-          Write-Host "===================="
+          Write-Host "==================="
 
 
       # =========================
-      # 9. Keep Alive
+      # 8. Keep Alive
       # =========================
       - name: Keep Alive
+        shell: pwsh
         run: |
           while ($true) {
             Start-Sleep 300
