@@ -6,16 +6,12 @@ on:
 jobs:
   nomachine:
     runs-on: windows-latest
-    timeout-minutes: 3600
+    timeout-minutes: 360
 
     steps:
-      # =========================
-      # 1. Crear usuario local
-      # =========================
       - name: Create Local User for NoMachine
+        shell: powershell
         run: |
-          Add-Type -AssemblyName System.Security
-
           $chars = @{
             Upper   = [char[]](65..90)
             Lower   = [char[]](97..122)
@@ -34,46 +30,34 @@ jobs:
           New-LocalUser -Name "NX" -Password $secure -AccountNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member "NX"
 
-          echo "NX_USER=NX" >> $env:GITHUB_ENV
-          echo "NX_PASS=$password" >> $env:GITHUB_ENV
+          "NX_USER=NX" >> $env:GITHUB_ENV
+          "NX_PASS=$password" >> $env:GITHUB_ENV
 
-      # =========================
-      # 2. Instalar NoMachine (MSI — CORRECTO)
-      # =========================
       - name: Install NoMachine
+        shell: powershell
         run: |
-          $url  = "https://download.nomachine.com/download/8.13/Windows/nomachine_8.13.1_1_x64.msi"
-          $msi  = "$env:TEMP\nomachine.msi"
+          $url = "https://download.nomachine.com/download/8.13/Windows/nomachine_8.13.1_1_x64.msi"
+          $msi = "$env:TEMP\nomachine.msi"
 
           curl.exe -L $url -o $msi
-
-          if (!(Test-Path $msi)) {
-            Write-Error "NoMachine MSI not downloaded"
-            exit 1
-          }
-
           Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait
 
-      # =========================
-      # 3. Abrir puerto 4000
-      # =========================
-      - name: Open NoMachine Firewall Port
+          & "C:\Program Files\NoMachine\bin\nxserver.exe" --start
+
+      - name: Open Firewall Port
+        shell: powershell
         run: |
           netsh advfirewall firewall delete rule name="NoMachine" | Out-Null
           netsh advfirewall firewall add rule name="NoMachine" `
-            dir=in action=allow protocol=TCP localport=4000
+            dir=in action=allow protocol=TCP localport=4000 profile=any
 
-      # =========================
-      # 4. Verificar nxserver
-      # =========================
-      - name: Verify NoMachine Service
+      - name: Verify NoMachine
+        shell: powershell
         run: |
           & "C:\Program Files\NoMachine\bin\nxserver.exe" --status
 
-      # =========================
-      # 5. Instalar Tailscale
-      # =========================
       - name: Install Tailscale
+        shell: powershell
         run: |
           $url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $msi = "$env:TEMP\tailscale.msi"
@@ -81,49 +65,42 @@ jobs:
           curl.exe -L $url -o $msi
           Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait
 
-      # =========================
-      # 6. Conectar a Tailscale
-      # =========================
       - name: Connect to Tailscale
+        shell: powershell
+        env:
+          TS_AUTHKEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
-            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
+
+          & $ts up `
+            --authkey=$env:TS_AUTHKEY `
             --hostname=gh-nx-$env:GITHUB_RUN_ID
 
-          $ip = $null
-          for ($i=0; $i -lt 10; $i++) {
-            $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-            if ($ip) { break }
+          for ($i = 0; $i -lt 10; $i++) {
+            $ip = & $ts ip -4
+            if ($ip) {
+              "TS_IP=$ip" >> $env:GITHUB_ENV
+              exit 0
+            }
             Start-Sleep 5
           }
 
-          if (-not $ip) {
-            Write-Error "Tailscale IP not assigned"
-            exit 1
-          }
+          Write-Error "Tailscale IP not assigned"
+          exit 1
 
-          echo "TS_IP=$ip" >> $env:GITHUB_ENV
-
-      # =========================
-      # 7. Mostrar datos
-      # =========================
       - name: Show Connection Info
+        shell: powershell
         run: |
-          Write-Host ""
           Write-Host "===== NoMachine ACCESS ====="
           Write-Host "IP:        $env:TS_IP"
           Write-Host "Port:      4000"
           Write-Host "User:      $env:NX_USER"
           Write-Host "Password:  $env:NX_PASS"
           Write-Host "============================"
-          Write-Host ""
 
-      # =========================
-      # 8. Mantener runner vivo
-      # =========================
       - name: Keep Alive
+        shell: powershell
         run: |
           while ($true) {
-            Write-Host "[$(Get-Date)] NoMachine active"
             Start-Sleep 300
           }
