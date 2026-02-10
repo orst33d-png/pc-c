@@ -14,15 +14,23 @@ jobs:
       # 1. Crear usuario
       # =========================
       - name: Create Local User
+        shell: pwsh
         run: |
-          $password = [System.Web.Security.Membership]::GeneratePassword(16,4)
+          $chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*"
+          $bytes = New-Object byte[] 24
+          [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+
+          $password = -join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })
 
           $secure = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "NX" -Password $secure -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "NX"
 
-          echo "NX_USER=NX" >> $env:GITHUB_ENV
-          echo "NX_PASS=$password" >> $env:GITHUB_ENV
+          if (!(Get-LocalUser -Name "NX" -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name "NX" -Password $secure -AccountNeverExpires
+            Add-LocalGroupMember -Group "Administrators" -Member "NX"
+          }
+
+          "NX_USER=NX" | Out-File -Append $env:GITHUB_ENV
+          "NX_PASS=$password" | Out-File -Append $env:GITHUB_ENV
 
 
       # =========================
