@@ -11,7 +11,7 @@ jobs:
     steps:
 
       # =========================
-      # 1. Crear usuario
+      # 1. Crear usuario local
       # =========================
       - name: Create Local User
         shell: pwsh
@@ -45,7 +45,7 @@ jobs:
 
           $sizeMB = (Get-Item $file).Length / 1MB
           if ($sizeMB -lt 20) {
-            Write-Error "Descarga inválida ($([math]::Round($sizeMB,2)) MB)"
+            Write-Error "Descarga inválida"
             exit 1
           }
 
@@ -53,21 +53,20 @@ jobs:
 
 
       # =========================
-      # 3. Verificar servicio NoMachine
+      # 3. Iniciar NoMachine (CREA Y ARRANCA EL SERVICIO)
       # =========================
-      - name: Verify NoMachine Service
+      - name: Start NoMachine Server
         shell: pwsh
         run: |
-          $svc = Get-Service -Name "nxserver" -ErrorAction SilentlyContinue
+          $nx = "C:\Program Files\NoMachine\bin\nxserver.exe"
 
-          if (-not $svc) {
-            Write-Error "Servicio nxserver no encontrado"
+          if (-not (Test-Path $nx)) {
+            Write-Error "nxserver.exe no encontrado"
             exit 1
           }
 
-          if ($svc.Status -ne "Running") {
-            Start-Service nxserver
-          }
+          & $nx --start
+          & $nx --status
 
 
       # =========================
@@ -123,7 +122,7 @@ jobs:
 
 
       # =========================
-      # 8. Keep Alive
+      # 8. Mantener runner activo
       # =========================
       - name: Keep Alive
         shell: pwsh
