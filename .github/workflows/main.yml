@@ -1,92 +1,66 @@
-name: NoMachine
+name: RDP
 
 on:
   workflow_dispatch:
 
 jobs:
-  nomachine:
+  secure-rdp:
     runs-on: windows-latest
     timeout-minutes: 3600
 
     steps:
 
       # =========================
-      # 1. Crear usuario local
+      # 1. Habilitar RDP correctamente
       # =========================
-      - name: Create Local User
+      - name: Enable RDP
+        shell: pwsh
+        run: |
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name "fDenyTSConnections" -Value 0
+
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name "UserAuthentication" -Value 0
+
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" | Out-Null
+          netsh advfirewall firewall add rule name="RDP-Tailscale" `
+            dir=in action=allow protocol=TCP localport=3389 profile=any
+
+          Restart-Service TermService -Force
+
+
+      # =========================
+      # 2. Crear usuario RDP
+      # =========================
+      - name: Create RDP User
         shell: pwsh
         run: |
           $chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*"
-          $bytes = New-Object byte[] 24
+          $bytes = New-Object byte[] 20
           [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
           $password = -join ($bytes | ForEach-Object { $chars[$_ % $chars.Length] })
 
           $secure = ConvertTo-SecureString $password -AsPlainText -Force
 
-          if (-not (Get-LocalUser -Name "NX" -ErrorAction SilentlyContinue)) {
-            New-LocalUser -Name "NX" -Password $secure -AccountNeverExpires
-            Add-LocalGroupMember -Group "Administrators" -Member "NX"
+          if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name "RDP" -Password $secure -AccountNeverExpires
+            Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+            Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
           }
 
-          "NX_USER=NX" | Out-File -Append $env:GITHUB_ENV
-          "NX_PASS=$password" | Out-File -Append $env:GITHUB_ENV
+          "RDP_USER=RDP" | Out-File -Append $env:GITHUB_ENV
+          "RDP_PASS=$password" | Out-File -Append $env:GITHUB_ENV
 
 
       # =========================
-      # 2. Instalar NoMachine (EXE OFICIAL)
-      # =========================
-      - name: Install NoMachine
-        shell: pwsh
-        run: |
-          $url  = "https://web9001.nomachine.com/download/9.3/Windows/nomachine_9.3.7_1_x64.exe"
-          $file = "$env:TEMP\nomachine.exe"
-
-          Invoke-WebRequest -Uri $url -OutFile $file -UseBasicParsing
-
-          $sizeMB = (Get-Item $file).Length / 1MB
-          if ($sizeMB -lt 20) {
-            Write-Error "Descarga inválida"
-            exit 1
-          }
-
-          Start-Process -FilePath $file -ArgumentList "/silent" -Wait
-
-
-      # =========================
-      # 3. Iniciar NoMachine (CREA Y ARRANCA EL SERVICIO)
-      # =========================
-      - name: Start NoMachine Server
-        shell: pwsh
-        run: |
-          $nx = "C:\Program Files\NoMachine\bin\nxserver.exe"
-
-          if (-not (Test-Path $nx)) {
-            Write-Error "nxserver.exe no encontrado"
-            exit 1
-          }
-
-          & $nx --start
-          & $nx --status
-
-
-      # =========================
-      # 4. Firewall
-      # =========================
-      - name: Open Firewall
-        shell: pwsh
-        run: |
-          netsh advfirewall firewall delete rule name="NoMachine" | Out-Null
-          netsh advfirewall firewall add rule name="NoMachine" `
-            dir=in action=allow protocol=TCP localport=4000 profile=any
-
-
-      # =========================
-      # 5. Instalar Tailscale
+      # 3. Instalar Tailscale (estable)
       # =========================
       - name: Install Tailscale
         shell: pwsh
         run: |
-          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          $url  = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
           $file = "$env:TEMP\tailscale.msi"
 
           Invoke-WebRequest -Uri $url -OutFile $file
@@ -94,35 +68,41 @@ jobs:
 
 
       # =========================
-      # 6. Conectar Tailscale
+      # 4. Conectar Tailscale
       # =========================
       - name: Connect Tailscale
         shell: pwsh
         run: |
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
             --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
-            --hostname=gh-nx-$env:GITHUB_RUN_ID
+            --hostname=gh-rdp-$env:GITHUB_RUN_ID
 
           $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+
+          if (-not $ip) {
+            Write-Error "Tailscale IP not assigned"
+            exit 1
+          }
+
           "TS_IP=$ip" | Out-File -Append $env:GITHUB_ENV
 
 
       # =========================
-      # 7. Mostrar datos
+      # 5. Mostrar acceso
       # =========================
       - name: Show Access
         shell: pwsh
         run: |
-          Write-Host "==== NoMachine ===="
+          Write-Host "==== RDP ACCESS ===="
           Write-Host "IP:   $env:TS_IP"
-          Write-Host "Port: 4000"
-          Write-Host "User: $env:NX_USER"
-          Write-Host "Pass: $env:NX_PASS"
-          Write-Host "==================="
+          Write-Host "Port: 3389"
+          Write-Host "User: $env:RDP_USER"
+          Write-Host "Pass: $env:RDP_PASS"
+          Write-Host "===================="
 
 
       # =========================
-      # 8. Mantener runner activo
+      # 6. Keep Alive
       # =========================
       - name: Keep Alive
         shell: pwsh
