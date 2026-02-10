@@ -23,7 +23,7 @@ jobs:
 
           $secure = ConvertTo-SecureString $password -AsPlainText -Force
 
-          if (!(Get-LocalUser -Name "NX" -ErrorAction SilentlyContinue)) {
+          if (-not (Get-LocalUser -Name "NX" -ErrorAction SilentlyContinue)) {
             New-LocalUser -Name "NX" -Password $secure -AccountNeverExpires
             Add-LocalGroupMember -Group "Administrators" -Member "NX"
           }
@@ -33,17 +33,23 @@ jobs:
 
 
       # =========================
-      # 2. Instalar NoMachine (MSI)
+      # 2. Instalar NoMachine (EXE OFICIAL)
       # =========================
       - name: Install NoMachine
         shell: pwsh
         run: |
-          $url  = "https://download.nomachine.com/download/8.13/Windows/nomachine_8.13.1_1_x64.msi"
-          $file = "$env:TEMP\nomachine.msi"
+          $url  = "https://web9001.nomachine.com/download/9.3/Windows/nomachine_9.3.7_1_x64.exe"
+          $file = "$env:TEMP\nomachine.exe"
 
-          curl.exe -L $url -o $file
+          Invoke-WebRequest -Uri $url -OutFile $file -UseBasicParsing
 
-          Start-Process msiexec.exe -ArgumentList "/i `"$file`" /quiet /norestart" -Wait
+          $sizeMB = (Get-Item $file).Length / 1MB
+          if ($sizeMB -lt 20) {
+            Write-Error "Descarga inválida ($([math]::Round($sizeMB,2)) MB)"
+            exit 1
+          }
+
+          Start-Process -FilePath $file -ArgumentList "/silent" -Wait
 
 
       # =========================
@@ -52,15 +58,15 @@ jobs:
       - name: Verify NoMachine Service
         shell: pwsh
         run: |
-          $svc = Get-Service | Where-Object { $_.Name -like "*nx*" }
+          $svc = Get-Service -Name "nxserver" -ErrorAction SilentlyContinue
 
-          if (!$svc) {
-            Write-Error "NoMachine service not found"
+          if (-not $svc) {
+            Write-Error "Servicio nxserver no encontrado"
             exit 1
           }
 
           if ($svc.Status -ne "Running") {
-            Start-Service $svc.Name
+            Start-Service nxserver
           }
 
 
@@ -84,7 +90,7 @@ jobs:
           $url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
           $file = "$env:TEMP\tailscale.msi"
 
-          Invoke-WebRequest $url -OutFile $file
+          Invoke-WebRequest -Uri $url -OutFile $file
           Start-Process msiexec.exe -ArgumentList "/i `"$file`" /quiet /norestart" -Wait
 
 
