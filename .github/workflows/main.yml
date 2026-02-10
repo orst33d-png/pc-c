@@ -38,21 +38,21 @@ jobs:
           echo "NX_PASS=$password" >> $env:GITHUB_ENV
 
       # =========================
-      # 2. Instalar NoMachine (CORREGIDO)
+      # 2. Instalar NoMachine (MSI — CORRECTO)
       # =========================
       - name: Install NoMachine
         run: |
-          $url  = "https://download.nomachine.com/download/8.13/Windows/nomachine_8.13.1_1_x64.exe"
-          $path = "$env:TEMP\nomachine.exe"
+          $url  = "https://download.nomachine.com/download/8.13/Windows/nomachine_8.13.1_1_x64.msi"
+          $msi  = "$env:TEMP\nomachine.msi"
 
-          curl.exe -L $url -o $path
+          curl.exe -L $url -o $msi
 
-          if (!(Test-Path $path)) {
-            Write-Error "NoMachine installer download failed"
+          if (!(Test-Path $msi)) {
+            Write-Error "NoMachine MSI not downloaded"
             exit 1
           }
 
-          Start-Process -FilePath $path -ArgumentList "/silent" -Wait
+          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait
 
       # =========================
       # 3. Abrir puerto 4000
@@ -64,7 +64,7 @@ jobs:
             dir=in action=allow protocol=TCP localport=4000
 
       # =========================
-      # 4. Verificar servicio NX
+      # 4. Verificar nxserver
       # =========================
       - name: Verify NoMachine Service
         run: |
